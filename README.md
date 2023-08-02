@@ -4,7 +4,7 @@ This repository contains blog posts explaining various big data concepts and tec
 
 ## Blogs
 
-1. [Understanding MapReduce with a Simple Example](MapReducer.md)
+1. [Understanding MapReduce with a Simple Example](MapReduce.md)
 
 ## Contributing
 
