@@ -5,6 +5,7 @@ This repository contains blog posts explaining various big data concepts and tec
 ## Blogs
 
 1. [Understanding MapReduce with a Simple Example](MapReduce.md)
+2. [Mounting a VirtualBox Shared Folder in Ubuntu](VirtualBoxSharedFolder.md)
 
 ## Contributing
 
