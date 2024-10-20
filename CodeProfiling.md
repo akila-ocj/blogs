@@ -12,8 +12,8 @@ To use `%timeit`, simply prefix the line of code or the cell with `%timeit` for 
 ```
 This will return the time taken to execute the sum function multiple times, giving you a clear picture of its efficiency.
 
-![./img/CodeProfiling_img1](.\img\CodeProfiling_img2.png)
-
+![img\CodeProfiling_img1.png](.\img\CodeProfiling_img2.png)
+    
 **2. %lprun - Line-by-Line Profiling**
 
 While `%timeit` is great for quick checks, `%lprun` from the `line_profiler` package allows for a more detailed line-by-line analysis. It shows the time spent on each line of a function, which is invaluable for deeper optimization efforts.
@@ -32,4 +32,4 @@ You can profile a function by specifying it with the `%lprun` command:
 ```
 This provides a detailed report where each line's execution count, time, and percentage of total time are clearly laid out, helping you pinpoint inefficiencies.
 
-![/img/CodeProfiling_img1](.\img\CodeProfiling_img1.png)
+![\img\CodeProfiling_img1](.\img\CodeProfiling_img1.png)
