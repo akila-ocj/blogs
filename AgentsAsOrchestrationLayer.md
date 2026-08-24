@@ -1,10 +1,10 @@
-# Make the Skirt 8 cm Longer: Agents as the Orchestration Layer
+# SaaS Is Gaining a New Kind of User
 
 A solo founder types one sentence:
 
 > "Make the skirt 8 cm longer and regenerate the manufacturing pattern."
 
-Here is what actually has to happen for that sentence to produce a DXF file a factory can cut from:
+Here is what has to happen for that sentence to produce a DXF file a factory can cut from:
 
 ```
 User:  "Make the skirt 8 cm longer and regenerate the manufacturing pattern."
@@ -27,122 +27,205 @@ User:  "Make the skirt 8 cm longer and regenerate the manufacturing pattern."
                            CLO                      ← the engine that actually knows cloth
 ```
 
-Most of the excitement about this picture goes to the top box and the bottom box: a model that understands a fashion brief, and a 3D garment simulator that understands how silk drapes. The interesting engineering is in the two boxes in the middle, and almost nobody talks about them.
+That is a real workflow. Yana Welinder, a non-engineer building an AI-native fashion brand solo, uses Codex to operate CLO — professional 3D fashion design software — and produce CAD files she needs, without ever having learned CLO herself.
 
-This post is about those two boxes: what a good tool surface looks like, why `modify_pattern(length_delta=80)` is the right altitude and `click(x=412, y=288)` is not, and what you have to build so that an agent driving professional software produces something you would send to a factory rather than something that merely looks finished.
+It is a good story. But the fashion part is the least interesting thing about it, and CLO is not really the point. The point is a sentence Yana says almost in passing:
 
-> **Where this comes from.** Lenny Rachitsky's *How I AI* episode with Yana Welinder ([How a solo founder used Codex and ChatGPT to launch a fashion brand without engineers](https://www.lennysnewsletter.com/), Aug 2026) describes exactly this shape: Yana, a non-engineer, uses Codex to operate CLO — professional 3D fashion design software — and produce CAD files she needs, without having learned CLO herself. Her line about the near-term future is the thesis of this post: *"SaaS is not disappearing; it is gaining a new kind of user."* Her detailed workflow write-ups are at [chatprd.ai/how-i-ai](https://www.chatprd.ai/how-i-ai/workflows-for-an-ai-native-fashion-brand). The diagram above is not a screenshot of her setup — it is the architecture her workflow implies, and the one worth designing for deliberately.
+> **"SaaS is not disappearing; it is gaining a new kind of user."**
+
+That is the most important idea in the episode, and it is a claim about software architecture, not about fashion. This post is about what it actually means, and what you should do differently on Monday if you are building software today.
+
+> **Source.** Lenny Rachitsky's *How I AI* episode with Yana Welinder, [How a solo founder used Codex and ChatGPT to launch a fashion brand without engineers](https://www.lennysnewsletter.com/) (August 2026). Her detailed workflow write-ups are at [chatprd.ai/how-i-ai](https://www.chatprd.ai/how-i-ai/workflows-for-an-ai-native-fashion-brand). The diagram above is not a screenshot of her stack — it is the architecture her workflow implies, and the one worth designing for deliberately.
 
 ---
 
 ## Table of contents
 
-1. [The claim: the agent is the orchestrator, not the engine](#1-the-claim-the-agent-is-the-orchestrator-not-the-engine)
-2. [Read the five calls again — the vocabulary *is* the product](#2-read-the-five-calls-again--the-vocabulary-is-the-product)
-3. [Seven rules for designing agent-facing tools](#3-seven-rules-for-designing-agent-facing-tools)
-4. [The verification loop is the whole thing](#4-the-verification-loop-is-the-whole-thing)
-5. [What breaks in production](#5-what-breaks-in-production)
-6. [If you sell software: you have a new kind of user](#6-if-you-sell-software-you-have-a-new-kind-of-user)
-7. [If you are the solo builder: run both paths](#7-if-you-are-the-solo-builder-run-both-paths)
-8. [Where else this pattern is sitting unbuilt](#8-where-else-this-pattern-is-sitting-unbuilt)
-9. [When not to do this](#9-when-not-to-do-this)
-10. [Checklist](#10-checklist)
+1. [The stack is growing a layer](#1-the-stack-is-growing-a-layer)
+2. [Why the API path wins](#2-why-the-api-path-wins)
+3. [So if you are building vertical SaaS today](#3-so-if-you-are-building-vertical-saas-today)
+4. [The trap: your API is CRUD, your product is workflows](#4-the-trap-your-api-is-crud-your-product-is-workflows)
+5. [Designing the domain API: seven rules](#5-designing-the-domain-api-seven-rules)
+6. [The oracle: why three of CLO's five calls are verification](#6-the-oracle-why-three-of-clos-five-calls-are-verification)
+7. [The three edges: CLI, MCP, webhooks](#7-the-three-edges-cli-mcp-webhooks)
+8. [What breaks in production](#8-what-breaks-in-production)
+9. [The commercial consequences](#9-the-commercial-consequences)
+10. [When computer-use is still the right answer](#10-when-computer-use-is-still-the-right-answer)
+11. [Checklist](#11-checklist)
 
 ---
 
-## 1. The claim: the agent is the orchestrator, not the engine
+## 1. The stack is growing a layer
 
-There is a persistent fantasy that a sufficiently good model will one day emit the DXF directly. Skip CLO. Skip the simulator. Just generate the file.
+For thirty years, software has been designed for one shape:
 
-It will not, and the reason is not model capability. It is that the DXF is downstream of physics. Whether a panel hangs correctly depends on fabric weight, grainline, seam allowance, how the pieces interact when the body inside them moves, and whether two surfaces intersect in a way that is fine in a rendering and impossible in cloth. CLO knows those things because someone spent years encoding them. A language model that "knows" them has memorized what the output usually looks like, which is a different and much worse property when your output goes to a cutting table.
+```
+Human
+  ↓
+GUI
+  ↓
+Software
+```
 
-So the division of labour is:
+Everything follows from that shape. The GUI is where the product lives. It is where workflow logic accumulates, where validation happens, where the "are you sure?" dialog protects you, and where the value of the product is demonstrated in a demo. The API, if there is one, is a side door for integrations — built later, by a smaller team, with less care.
 
-| Layer | Owns | Fails at |
+That shape is now growing a layer. Two variants are emerging:
+
+```
+Human                      Human
+  ↓                          ↓
+AI agent                   AI agent
+  ↓                          ↓
+MCP / API / CLI            GUI computer-use
+  ↓                          ↓
+Software                   Software
+```
+
+Both are real, both work today, and they are not equally good. The left path — the agent talking to a contract — is the one that gets dramatically more reliable over time. The right path — the agent driving your buttons by looking at pixels — is the fallback, and it stays a fallback.
+
+The important structural change is not that a box got added. It is **where the human's intent gets translated into operations.** It used to happen in a human's head, expressed through a GUI that the vendor designed. Now it happens in a model, expressed through whatever surface the vendor exposes. If the only surface you expose is a GUI, you have decided that every agent interacting with your product must do so through the least reliable channel available.
+
+The CLO example is just the first industry where this became visible, because 3D garment simulation happens to have a hard learning curve and a scriptable engine underneath. The pattern is not fashion-specific. It is what happens to every category of software with real domain depth.
+
+---
+
+## 2. Why the API path wins
+
+"Likely to become much more reliable" deserves an argument, not an assertion. Here is the argument, in the order that matters.
+
+**A GUI is a lossy encoding of the operations underneath it.** Your interface takes `extend_panel_length(panels, delta)` and encodes it as: focus a window, open a menu, wait for a modal, click a field, type digits, press a button whose label changed in v9. A computer-use agent has to *decode that back* into the operation, through pixels, every single time. The API path skips the encode/decode round trip entirely. You cannot out-engineer the fact that one path does strictly more work to arrive at the same place.
+
+**Failures are loud on one side and silent on the other.** A renamed API field breaks the call — you get an error, in CI, before a customer does. A moved button does not break anything; it just makes the agent click the wrong thing and continue confidently. Silent misbehaviour is the expensive failure mode, and the GUI path is structurally prone to it.
+
+**Determinism and replay.** The same intent through an API produces the same five calls, which you can log, diff, and replay without the model in the loop. The same intent through computer-use produces a different click sequence each run, and your audit artifact is a video. When a customer asks "why did the system do this?", one of those answers keeps the customer.
+
+**Cost and latency.** Every computer-use step is a screenshot, a vision pass, and a decision. A domain call is a few hundred tokens. For a five-step task the difference is an annoyance; for the hundred-step workflows agents actually get asked to do, it is the difference between viable and not.
+
+**Permissions.** This one is underrated and will eventually become the deciding factor. A computer-use agent inherits *whatever the logged-in human can do* — full session, full blast radius, no scoping. An API-driven agent can hold a token scoped to three verbs, rate-limited, with every call attributed to it in your audit log. The first arrangement is one you will have to explain to a security review. The second one is one you can pass.
+
+**Concurrency and testability.** Ten agents can hold ten API sessions. Ten agents cannot share one desktop. And a tool contract can be tested in CI — you can assert that `modify_pattern` rejects bad units — whereas testing that an agent can still find the Apply button is a much sadder job.
+
+| | Agent → API/MCP/CLI | Agent → computer-use |
 | --- | --- | --- |
-| **Agent** | Intent, decomposition, sequencing, retry, interpreting failures, explaining results | Anything requiring ground truth it cannot compute |
-| **Tool layer (MCP)** | Vocabulary, validation, units, state handles, error semantics | Nothing, if you design it well — it is glue with opinions |
-| **Specialist app** | Physics, domain constraints, file formats, correctness | Knowing what the user meant |
+| Reliability ceiling | Bounded by contract quality | Bounded by perception |
+| Failure mode | Loud (error) | Silent (wrong click) |
+| Auditability | Call log, replayable | Screen recording |
+| Cost per step | Low | Screenshot + vision pass |
+| Permissions | Scopable per agent | Whatever the human has |
+| Concurrency | N sessions | One desktop |
+| Breaks when | You change the contract | You change the CSS |
 
-The agent is not replacing CLO. It is replacing the *twelve months of learning CLO* that used to sit between having a design idea and being able to execute it. That is the actual unlock, and it is much bigger than it sounds: in most industries the bottleneck is not the tool's capability, it is the tax of becoming fluent in the tool.
-
-The Ruth Asawa–inspired gown from the episode is the sharpest version of this. It was not impossible to make before. 3D printing existed. What did not exist was a way to get through the enormous volume of CAD work required to prepare it — enough work that the idea was not worth starting. The bottleneck was never creative and never physical. It was the labour cost of translating an idea into a machine-readable form, and that is exactly the cost an orchestration layer removes.
-
-**Every industry has ideas parked behind that same tax.** They do not look like missing capability. They look like "we'd need someone to spend three weeks in the modelling tool for a maybe."
+None of this means computer-use is bad. It means it is the *fallback*, correct in the specific situation described in [section 10](#10-when-computer-use-is-still-the-right-answer). If you control the software, or you can get an automation surface, the choice is not close.
 
 ---
 
-## 2. Read the five calls again — the vocabulary *is* the product
+## 3. So if you are building vertical SaaS today
+
+Here is how I would architect it:
 
 ```
-get_garment()
-modify_pattern(length_delta=80)
-run_simulation()
-validate_collision()
-export_dxf()
+                 Human users
+                     │
+                  Web UI
+                     │
+                     ▼
+            ┌─────────────────┐
+            │   Domain API    │
+            │                 │
+            │ customers       │
+            │ assets          │
+            │ workflows       │
+            │ documents       │
+            │ billing         │
+            │ reporting       │
+            └────────┬────────┘
+                     │
+         ┌───────────┼───────────┐
+         ▼           ▼           ▼
+        CLI         MCP       Webhooks
+         │           │           │
+       Codex       Agents    automation
 ```
 
-Five calls. Look at what is *not* in that list.
+Look at what moved. **The domain API is the product.** The web UI is a client of it — the first client, the one humans use, and no longer the privileged one. The CLI, the MCP server, and the webhooks are three more clients, all thin, all speaking the same vocabulary.
 
-There is no `open_menu()`. No `select_tool("edit")`. No `click(x, y)`. No `wait_for_dialog()`. The tool surface is not a transcription of the GUI. It is a set of verbs at the altitude the user actually thinks in.
+This is not a new idea. It is the old "API-first" argument, and plenty of teams nodded at it and then shipped a UI with the business logic in the controllers anyway, because nothing forced the issue. The thing that changed is that **something now forces the issue.** An agent cannot use logic that only exists in your React components. If your workflow rules live in the UI, your product is invisible to the fastest-growing category of user you will have.
 
-That distinction is the single highest-leverage decision in the whole architecture, so it is worth being precise about why.
+Three properties make this architecture worth the discipline:
 
-**A GUI-shaped tool surface makes the agent responsible for the application's internal state machine.** If your tools are clicks and menus, the agent must know that the pattern editor has to be focused before the length field is editable, that the field is in millimetres, that committing requires a different button depending on whether you are in draft mode, and that a modal will appear if the garment has unsaved simulation results. Every one of those facts is a chance to fail, and the agent learns them by trial and error, at your inference cost, in a way that does not generalize to the next version of the UI.
+**One implementation of every rule.** If `approve_invoice` enforces the two-signature policy inside the domain API, then the web UI, the CLI, the agent, and the webhook retry all enforce it. If the policy lives in the UI's submit handler, three of those four paths are a compliance incident waiting to be discovered.
 
-**A domain-shaped tool surface makes the *application* responsible for its own state machine, which is where that responsibility already lived.** `modify_pattern(length_delta=80)` either works or returns an error that says why. The agent's job shrinks to what it is genuinely good at: deciding *what* to do and reacting when it does not work.
+**Uniform audit.** Every mutation goes through one place, so "who changed this, through what surface, with what arguments" has one answer, whether the actor was a person, a cron job, or Codex acting for a person.
 
-Here is the same task expressed both ways.
+**The edges get cheap.** Once the domain API exists, an MCP server is a few hundred lines of schema. A CLI is an argument parser. Adding the next surface — whatever protocol replaces MCP in three years — is an afternoon, not a rewrite. That is the real hedge here: nobody knows which agent protocol wins, and if your domain layer is clean you do not need to.
+
+The compressed version: **build the middle box first, and treat every interface as a rendering of it.**
+
+---
+
+## 4. The trap: your API is CRUD, your product is workflows
+
+This is the failure I would expect most teams to walk into, so it is worth naming precisely.
+
+Most vertical SaaS already has an API. It is usually a CRUD reflection of the database — `GET /invoices`, `POST /invoices`, `PATCH /invoices/{id}` — built for integrations, generated from models, and technically complete. Teams look at it and conclude the agent story is handled.
+
+It is not handled, because the CRUD API exposes your *tables*, and your product is your *workflows*. The knowledge of what "approving an invoice" means — which fields change together, which policy applies, which side effects fire, what makes it invalid — lives in a controller behind the UI, or worse, in the UI itself.
+
+Hand an agent the CRUD API and you have asked it to reimplement your business logic from the outside:
 
 ```python
-# Bad: the GUI, transcribed. The agent is now a fragile macro recorder.
-focus_window("CLO")
-click_menu("Pattern")
-click_menu_item("Edit Length")
-wait_for_dialog("Length Editor")
-select_field("delta")
-type_text("80")
-click_button("Apply")           # or "OK", depending on version
-screenshot()                    # ...and now ask a vision model if it worked
+# What the agent has to do against a CRUD API.
+# Every line is an opportunity to get your domain wrong.
+inv = GET("/invoices/8812")
+GET("/approval_policies?org=42")            # ...which policy applies here?
+GET("/users/me/permissions")                # ...am I even allowed?
+PATCH("/invoices/8812", {"status": "approved",
+                         "approved_by": "u_17",
+                         "approved_at": "2026-08-24T09:14:00Z"})
+POST("/ledger_entries", {...})              # did the UI also do this? probably?
+POST("/notifications", {...})               # and this?
 ```
 
+It will work in testing and be wrong in production, in ways that surface a quarter later during reconciliation. And note the last two lines: the agent is *guessing* at your side effects. Anything the UI's submit handler did that the agent does not know about simply will not happen.
+
+The domain version:
+
 ```python
-# Good: the domain, exposed. The agent states intent; the app enforces reality.
-garment = get_garment(id="skirt-v7")
-result  = modify_pattern(
-    garment_id = garment.id,
-    target     = "skirt_panel_group",
-    op         = "extend_length",
-    delta      = {"value": 80, "unit": "mm"},
-    preserve   = ["hem_allowance", "grainline", "notch_positions"],
+approve_invoice(
+    invoice_id      = "8812",
+    approver        = "u_17",
+    note            = "matches PO 4471",
+    idempotency_key = "codex-run-9f2a",
 )
+# → policy check, ledger entry, notification, audit record — all of it, once,
+#   the same way the web UI does it, because it is the same code path.
 ```
 
-The second version is also *auditable*, which matters more than it seems. When the factory asks why the hem allowance changed, there is a call log with an answer. The first version leaves you with a screen recording.
+One call. Your rules, your side effects, your audit trail. The agent cannot get the policy wrong because the agent is not implementing the policy.
 
-### The screenshot-and-click trap
+The test for whether you have a domain API or a CRUD API: **pick the three things your customers actually do in your product, and see whether each is one call.** If "approve an invoice", "onboard a customer", "close a period" each require the caller to orchestrate six writes in the right order, you have a database with HTTP in front of it. That is a fine integration surface and a poor agent surface.
 
-Computer-use agents that drive a GUI by looking at pixels are genuinely impressive and are the correct answer for exactly one situation: software with no automation surface and no prospect of getting one. For everything else they are the expensive fallback. They are slow (a screenshot round-trip per step), non-deterministic (the same intent produces different click sequences), unauditable (the log is a video), and brittle in a specific ugly way — a UI redesign silently changes behaviour rather than breaking loudly.
-
-If you control the software, or the software has a scripting API, or the vendor has any automation surface at all, spend the day wrapping it. The day pays for itself in the first debugging session.
+This is exactly what the CLO example gets right, and why those five calls are worth staring at. `modify_pattern(length_delta=80)` is a domain verb. The CRUD-shaped version of that API would expose pattern nodes and let the caller mutate vertex coordinates — technically more powerful, and useless to anyone who is not already a CLO expert. Which is the entire population you are trying to serve.
 
 ---
 
-## 3. Seven rules for designing agent-facing tools
+## 5. Designing the domain API: seven rules
 
-These are the rules I would hand someone building the MCP box in that diagram, in rough order of how much pain they save.
+These apply whether the box in the middle is wrapping CLO or backing your own vertical SaaS.
 
-### 3.1 Name verbs at the user's altitude, not the implementation's
+### 5.1 Name verbs at the user's altitude
 
-The test: **could the user have said this sentence?** "Extend the skirt panels by 8 cm" — yes. "Set field `pnl_len_d` on the active pattern node" — no. If the user could not have said it, the tool is at the wrong altitude and the agent will have to invent the mapping every time.
+The test: **could a competent user have said this sentence out loud?** "Extend the skirt panels by 8 cm" — yes. "Set field `pnl_len_d` on the active pattern node" — no. "Approve invoice 8812" — yes. "Update invoice status and insert two ledger rows" — no.
 
-The corollary is that you will have *fewer* tools than you expect. Five good verbs beat forty faithful ones. Every tool you expose is a thing the agent must choose between, and choice is where errors live.
+You will end up with *fewer* verbs than you expect, and that is the goal. Five good ones beat forty faithful ones. Every additional tool is a decision the agent has to make correctly, and decisions are where errors live.
 
-### 3.2 Make units explicit in the schema, never in a comment
+Notice what is absent from the CLO list: no `open_menu()`, no `select_tool()`, no `click(x, y)`, no `wait_for_dialog()`. The surface is not a transcription of the GUI. If your tool list reads like a walkthrough of your own interface, you have made the agent responsible for your application's internal state machine — which is a responsibility that already had an owner.
 
-Look at the original call again: the user said **8 cm**, the call says **80**. Somewhere in there a unit conversion happened silently, inside a model, based on a convention documented in prose.
+### 5.2 Put units in the schema, never in a comment
 
-That is a whole class of expensive failure, and it is the one that ends with a factory cutting 8 mm instead of 80 mm. Do not accept a bare number:
+Read the original call once more: the user said **8 cm**, the call says **80**. A unit conversion happened silently, inside a model, based on a convention documented in prose.
+
+That is the class of bug that ends with a factory cutting 8 mm instead of 80 mm. Do not accept a bare number:
 
 ```jsonc
 // Bad — "everything is mm" is a convention, and conventions lose.
@@ -161,15 +244,11 @@ That is a whole class of expensive failure, and it is the one that ends with a f
 }
 ```
 
-If you cannot change the shape, put the unit in the *name*: `length_delta_mm`. A parameter name is read by the model on every single call. A comment in your docs is read once, maybe.
+If you cannot change the shape, put it in the name: `length_delta_mm`, `amount_minor_units`, `timeout_seconds`. A parameter name is read on every call; your docs are read once, maybe. Apply this to every ambiguous scalar in your domain — currency, angles, timestamps, sizes. If two reasonable people could read the number differently, the schema decides.
 
-The same logic applies to every ambiguous scalar in your domain: currency (minor units or major?), angles (degrees or radians?), timestamps (UTC or local?), sizes (US or EU?). If two reasonable people could read the number differently, the schema must decide.
+### 5.3 Return handles and state, not prose
 
-### 3.3 Return handles and state, not prose
-
-`get_garment()` is first in the list for a reason. It is how the agent learns the shape of the world before touching it.
-
-Make it return structured state with stable identifiers:
+`get_garment()` is first in the list for a reason: it is how the agent learns the shape of the world before touching it. Every domain API needs its equivalent.
 
 ```json
 {
@@ -177,33 +256,31 @@ Make it return structured state with stable identifiers:
   "revision": 12,
   "units": "mm",
   "panels": [
-    { "id": "skirt_front", "length": 620, "grainline": "warp", "seams": ["side_l", "side_r", "waist", "hem"] },
-    { "id": "skirt_back",  "length": 620, "grainline": "warp", "seams": ["side_l", "side_r", "waist", "hem"] }
+    { "id": "skirt_front", "length": 620, "grainline": "warp" },
+    { "id": "skirt_back",  "length": 620, "grainline": "warp" }
   ],
   "groups": { "skirt_panel_group": ["skirt_front", "skirt_back"] },
   "last_simulation": { "revision": 11, "status": "stale" }
 }
 ```
 
-Two things earn their keep here. **Stable IDs** mean the agent refers to `skirt_front`, not "the second panel", so a reordering does not silently retarget an edit. **`revision`** turns every mutation into an optimistic-concurrency check: `modify_pattern` takes the revision it expects, and a mismatch is a clean error instead of an edit applied to a garment that changed underneath it.
+**Stable IDs** mean the agent targets `skirt_front`, not "the second panel", so a reordering cannot silently retarget an edit. **`revision`** turns every mutation into an optimistic-concurrency check — pass the revision you expect, get a clean conflict error instead of an edit applied to something that moved underneath you. And `last_simulation.status: "stale"` tells the agent the physics is out of date, which is a dependency it can act on without you explaining it in a system prompt.
 
-And notice `last_simulation.status: "stale"`. The state tells the agent that the physics is now out of date. That is a hint the agent can act on without you having to explain the dependency in a system prompt.
+That last trick generalizes further than it looks. Anywhere your state has a "this needs recomputing" concept — a report, a forecast, a search index, a compliance check — say so in the payload. It converts prompt engineering into schema.
 
-### 3.4 Separate cheap preview from expensive commit
+### 5.4 Separate cheap preview from expensive commit
 
-`run_simulation()` is not free. In this domain it is seconds to minutes of compute; in others it is a build, a render farm job, or a bill.
+`run_simulation()` is not free — seconds to minutes of compute here, and in other domains a build, a render job, or a bill. Give the agent a way to check its work before spending:
 
-Give the agent a way to check its work cheaply before spending:
+- `modify_pattern(..., dry_run=true)` → returns the diff and validation errors, changes nothing
+- `run_simulation(quality="draft" | "final")` → iterate cheaply, commit once
+- `estimate_cost(op)` → wherever the agent's choice has a real price
 
-- `modify_pattern(..., dry_run=true)` → returns the diff and any validation errors, changes nothing
-- `run_simulation(quality="draft" | "final")` → the agent iterates on draft and commits once on final
-- `estimate_cost(op)` → for anything where the agent's choice has a real price
+An agent that can look before it leaps behaves far better than one that can only leap and apologise. It is also the cheapest guardrail you will ever ship against a runaway loop.
 
-An agent that can look before it leaps behaves dramatically better than one that can only leap and apologise. This is also the cheapest guardrail you will ever ship against runaway loops.
+### 5.5 Write errors for a reader who will act on them
 
-### 3.5 Write errors for a reader who will act on them
-
-An agent reads your error message and immediately decides what to do next. This makes error text a functional interface, not a diagnostic afterthought.
+An agent reads your error and immediately decides what to do next. That makes error text a functional interface, not a diagnostic afterthought.
 
 ```
 Bad:   Error: operation failed (code 0x8007)
@@ -217,83 +294,94 @@ Good:  ExtendLengthRejected: panel 'skirt_front' extended to 700mm but
        accept ~18% more fabric per unit.
 ```
 
-The third one contains the diagnosis, the constraint that was violated, the numbers involved, and the exits. An agent given that message fixes the problem in one turn. An agent given the first message retries the identical call, twice, and then tells the user it did not work.
+Diagnosis, constraint, numbers, exits. An agent given the third message fixes it in one turn. An agent given the first retries the identical call twice and then tells the user it did not work.
 
-The rule of thumb: **write errors as if the reader is competent, has no access to your source, and must decide in the next five seconds.** That describes an agent, and it also describes a new engineer on your team at 2 a.m., which is why this rule was always good practice.
+The rule: **write errors as if the reader is competent, has no access to your source, and must decide in five seconds.** That describes an agent, and it also describes a new engineer at 2 a.m., which is why this was always good practice.
 
-### 3.6 Make validation a first-class callable, not a side effect
+### 5.6 Make validation a first-class callable
 
-`validate_collision()` is a separate tool, and that is the correct design.
+`validate_collision()` being its own verb — rather than something that happens implicitly inside `export_dxf()` — is one of the best decisions in that five-call list.
 
-If collision checking only happened implicitly inside `export_dxf()`, the agent would find out about problems at the very end, after the expensive steps, with no way to isolate the cause. As a standalone verb, the agent can call it after every change, bisect which change introduced a problem, and — crucially — call it *before* export as a self-check.
+As a standalone verb, the agent can call it after every change, bisect which change caused a problem, and self-check before the expensive step. Buried inside export, problems surface at the end, with no way to isolate the cause.
 
-Give it output an agent can reason about: not `false`, but *what* collides, *where*, and by *how much*.
+Give it output an agent can reason about — not `false`, but what, where, and how much:
 
 ```json
 {
   "ok": false,
   "collisions": [
-    {
-      "between": ["skirt_front", "left_leg_avatar"],
-      "max_penetration_mm": 4.2,
-      "at_frame": 37,
-      "pose": "walk_cycle",
-      "severity": "warning"
-    }
+    { "between": ["skirt_front", "left_leg_avatar"],
+      "max_penetration_mm": 4.2, "at_frame": 37,
+      "pose": "walk_cycle", "severity": "warning" }
   ]
 }
 ```
 
-`max_penetration_mm: 4.2` at one frame of a walk cycle is a different decision from a static 40 mm intersection. Boolean validators throw away the information the agent needs to make that call, and the agent will then either ignore real problems or block on trivial ones.
+4.2 mm at one frame of a walk cycle is a different decision from a static 40 mm intersection. A boolean throws away the information the agent needs, and it will then either ignore real problems or block on trivial ones. Your vertical SaaS equivalent is `validate_period_close()`, `check_eligibility()`, `dry_run_payroll()` — every rule engine you have, exposed as something callable rather than something that only runs on submit.
 
-### 3.7 Make every mutation reversible, and say so in the response
+### 5.7 Make mutations reversible, and say what changed
 
-Agents take wrong turns. The question is not whether, but how much a wrong turn costs.
-
-Return an undo token from every mutating call, and expose `revert(token)`:
+Agents take wrong turns. The question is what a wrong turn costs.
 
 ```json
-{ "ok": true, "revision": 13, "undo_token": "rev-12->13-a41f", "changed": ["skirt_front.length", "skirt_back.length"] }
+{ "ok": true, "revision": 13, "undo_token": "rev-12->13-a41f",
+  "changed": ["skirt_front.length", "skirt_back.length"] }
 ```
 
-The `changed` array is worth as much as the undo token. It lets the agent confirm the blast radius matched its intent — and catch the case where a "length" edit also moved notches it promised to preserve.
+The `changed` array earns as much as the undo token: it lets the agent confirm the blast radius matched its intent, and catches the case where a "length" edit also moved notches it promised to preserve.
 
 ---
 
-## 4. The verification loop is the whole thing
+## 6. The oracle: why three of CLO's five calls are verification
 
-Strip the diagram down and there are really only two kinds of call in it:
+Strip the CLO surface down and there are only two kinds of call:
 
 ```
 mutate:  modify_pattern, export_dxf
 verify:  get_garment, run_simulation, validate_collision
 ```
 
-Three of the five are verification. That ratio is not an accident, and it is the part most people leave out when they build their first version.
+Three of five are verification. That ratio is not an accident, and it is the part most teams leave out of version one.
 
-An agent's fundamental weakness is that it cannot tell the difference between "I did this correctly" and "I produced something that looks like a correct result." It has no privileged access to truth about the physical world. Left alone it will generate a plausible pattern, describe it confidently, and be wrong in a way no reader can detect from the text.
+An agent's fundamental weakness is that it cannot distinguish "I did this correctly" from "I produced something that looks like a correct result." Left alone it will generate a plausible pattern, describe it confidently, and be wrong in a way no reader can detect from the text.
 
-The simulator fixes this. It is a **ground-truth oracle**: an external, non-negotiable check the agent cannot talk its way past. Cloth either intersects the body or it does not. The panels either close or they do not. And because the oracle is callable, the agent can run the loop itself:
+The simulator fixes this. It is a **ground-truth oracle**: an external, non-negotiable check the agent cannot talk its way past. Cloth either intersects the body or it does not. And because the oracle is callable, the agent runs the loop itself:
 
 ```
-propose change → apply → simulate → validate → 
-    if fail: read the specific failure, adjust, repeat
-    if pass: export
+propose → apply → verify →
+    fail: read the specific failure, adjust, repeat
+    pass: export
 ```
 
-This is the same reason coding agents got useful when they got a test runner and a compiler rather than better prose. The model did not suddenly become more truthful. It got an oracle that says no.
+This is why coding agents got useful when they got a test runner and a compiler, not when they got more eloquent. The model did not become more truthful; it got something that says no.
 
-**So the design question for any domain is: what is my oracle, and can the agent call it?** If you cannot answer that, you do not have an agent workflow yet — you have a very confident intern with no supervisor. And you should be honest about the gap: an oracle covers what it covers. CLO tells you the cloth does not intersect the avatar. It does not tell you the garment is beautiful, that the seams are sewable by the factory you actually use, or that the pattern grades sensibly to size 18. The episode is refreshingly clear about this: turning designs into accurate sewing patterns is still *the hard unsolved part*. The loop above gets you a defensible draft, not a finished product.
+**So the design question for any product is: what is my oracle, and can the agent call it?** In vertical SaaS it is rarely physics — it is your validation rules, your reconciliation job, your eligibility engine, your policy checks. You almost certainly have one. It is almost certainly only reachable by submitting a form. Expose it.
+
+And be honest about its edges. CLO tells you the cloth does not intersect the avatar. It does not tell you the garment is beautiful, that the seams are sewable by your actual factory, or that the pattern grades sensibly to size 18. The episode is clear-eyed about this: turning designs into accurate sewing patterns is still the hard unsolved part, and Yana's response is to run human patternmakers and Codex on it *in parallel* and let the results decide. That is the right posture for anything consequential — keep the existing process running alongside the agent until the outputs agree, not as a rollback plan but as the evaluation.
 
 ---
 
-## 5. What breaks in production
+## 7. The three edges: CLI, MCP, webhooks
 
-The happy path in the diagram is five calls. Here is what the fifth attempt looks like.
+The bottom row of the architecture diagram is three adapters, and they are not redundant. Each answers a different question.
 
-**Session and state.** `get_garment()` implies something is open. Which document? In whose session? If two agent runs touch the same project, whose revision wins? Decide early whether your tool layer is stateless (every call carries a garment ID and revision) or session-bound (there is an open document and calls act on it). Stateless is more verbose and vastly easier to debug, resume, and run concurrently. Prefer it unless the underlying app makes it impossible.
+**CLI — for coding agents and humans in terminals.** Codex, Claude Code, and their successors are extremely good at shell. A well-formed CLI over your domain API gets you agent compatibility with no protocol work at all, and it composes with everything else in a pipeline. Make it script-grade: `--json` output, non-zero exit codes on failure, no interactive prompts unless a TTY is attached, and every verb from the domain API represented.
 
-**Long-running operations.** A final-quality simulation can outlive an agent's tool-call timeout. Do not make the agent sit in a blocking call. Return a job handle immediately and expose polling:
+**MCP — for conversational agents that need discovery.** The value MCP adds over "here is our OpenAPI spec" is that the agent can enumerate what is available, with schemas and descriptions, at runtime. That makes it the right surface when the agent is reasoning about *which* operation to use rather than executing a known script. This is where the schema discipline from section 5 pays off hardest — the description text you write is prompt material on every call.
+
+**Webhooks — because the agent should not poll.** The other three edges are inbound. Webhooks are how your product tells an agent something happened, and they are what turns an agent from a tool into a participant: an invoice arrived, a simulation finished, a check failed. Long-running work in particular needs this shape (see the next section).
+
+The discipline that matters: **all three are thin.** No business logic, no validation that only exists in one of them, no verb that the CLI has and MCP does not. The moment an edge starts making decisions, you have four implementations of your product again — and this time one of them is only reachable by robots.
+
+---
+
+## 8. What breaks in production
+
+The happy path is five calls. Here is what the fifth attempt looks like.
+
+**Session and state.** `get_garment()` implies something is open. Which document, in whose session, and who wins when two runs touch it? Prefer stateless — every call carries the object ID and expected revision. It is more verbose and vastly easier to debug, resume, and run concurrently.
+
+**Long-running operations.** A final-quality simulation can outlive a tool-call timeout. Return a handle, expose polling, and fire a webhook on completion:
 
 ```
 run_simulation(quality="final") → { "job_id": "sim-8812", "status": "queued", "eta_seconds": 240 }
@@ -301,134 +389,98 @@ get_job(job_id)                 → { "status": "running", "progress": 0.4 }
                                 → { "status": "done", "result": {...} }
 ```
 
-Then let the agent do something useful while it waits — which, as the episode notes, is precisely what makes this work for a solo founder: kick off the long job, go drape actual fabric, come back to the result. The asynchronous shape is not a technical nicety; it is what expands what fits in one person's day.
+Then the agent can do something else while it waits — which is precisely what makes this work for a solo founder: start the long job, go drape actual fabric, come back to the result. The asynchronous shape is not a technical nicety; it is what expands what fits into one person's day.
 
-**Partial failure.** `export_dxf()` succeeds; the write to shared storage fails. Now there is a revision the agent believes is exported and a factory that never received it. Every tool that crosses a boundary needs to be either idempotent (safe to call twice — take a client-supplied idempotency key) or transactional (nothing happened). "Probably fine" is a third option that shows up in incident reviews.
+**Partial failure.** `export_dxf()` succeeds; the write to shared storage fails. Now there is a revision the agent believes is exported and a factory that never got it. Every boundary-crossing call must be idempotent (take a client-supplied key) or transactional. "Probably fine" is a third option that shows up in incident reviews.
 
-**Silent coercion.** The failure mode that will actually hurt you is not an exception; it is your API accepting `length_delta=80` when the agent meant 8 cm and quietly clamping, rounding, or reinterpreting it. Validate hard at the boundary and reject. An error costs one turn. A silent coercion costs a production run of garments.
+**Silent coercion.** The failure that will actually hurt you is not an exception — it is your API accepting `length_delta=80` when the agent meant 8 cm and quietly clamping or reinterpreting it. Reject at the boundary. An error costs one turn; a silent coercion costs a production run.
 
-**Non-determinism in the log.** The same prompt does not produce the same call sequence twice. If the output goes anywhere consequential, log the *calls*, not the conversation, and treat that log as the artifact of record. Then a bad garment is debuggable: you can replay the exact five calls without the model in the loop, and find out whether the agent was wrong or the tool was.
+**Non-determinism in the log.** The same prompt does not produce the same call sequence twice. Log the *calls*, not the conversation, and treat that log as the artifact of record. Then a bad outcome is debuggable: replay the exact five calls without the model and find out whether the agent was wrong or the tool was.
 
-**Cost and runaway loops.** An agent that can call `run_simulation` in a retry loop can spend real money on compute while it converges. Cap it: a per-run budget, a maximum call count per tool, and a hard stop that returns a specific error the agent understands (`BudgetExceeded: 6 of 6 simulations used; summarize and ask the user`). Make the cap a tool-layer concern, not a prompt instruction — prompts are advisory, code is not.
+**Runaway cost.** An agent that can call `run_simulation` in a retry loop can spend real money converging. Cap it in code — per-run budget, max calls per tool, and a hard stop that returns something the agent understands (`BudgetExceeded: 6 of 6 simulations used; summarize and ask the user`). Prompts are advisory; code is not.
 
----
-
-## 6. If you sell software: you have a new kind of user
-
-This is the part to take seriously if you build professional software of any kind.
-
-For twenty years the moat around specialist software was partly capability and substantially **fluency**. CLO, AutoCAD, Ableton, Cadence, ArcGIS, SAP, Avid — each has a real learning cliff, and that cliff produced a professional class whose expertise was partly in the domain and partly in the tool. The cliff protected the vendor: switching cost was measured in retraining.
-
-An agent that can drive the tool competently changes who can buy it. Yana never learned CLO and still produced CAD files with it. That is not a story about CLO being threatened. It is a story about CLO's addressable market expanding to include everyone who has the design problem but never had six months to spend on the interface.
-
-That expansion is not automatic. It goes to whoever ships the tool surface. Concretely:
-
-**Expose a domain API, not a UI transcript.** Everything in section 3. If the only automation path through your product is pixels, the agent-driven experience of your product will be bad, and the comparison will be against a competitor where it is good.
-
-**Make headless a supported mode.** A per-seat licence with an interactive login is a hard blocker for automation. If a run needs a human to click a dialog, it is not a workflow. Decide what an agent seat is, what it costs, and how it authenticates — before a customer asks, because a customer who asks and gets "not supported" has just been told to evaluate alternatives.
-
-**Ship the validators, loudly.** Your differentiation against a model that fabricates plausible output is that you can *prove* things about the result. `validate_collision()` is not a utility function; it is the reason to route through you at all. Expose every check you have as a callable verb.
-
-**Log for audit.** When a customer's agent produces a bad artifact, the first question is whether the tool did what it was told. If you can answer that with a call log, you keep the customer. If the answer is a shrug, you become the suspect by default.
-
-**Price the ceiling, not the seat.** Agents make more calls than humans by orders of magnitude. Metering that maps to your actual cost (simulations, exports, compute-minutes) survives contact with automation. Per-seat pricing quietly encourages your best customers to share a seat with a bot, which is worse for both of you.
-
-The one-line version, from the episode: *SaaS is not disappearing; it is gaining a new kind of user.* The vendors who notice will find the new user is a lot less price-sensitive about the parts they cannot fake.
+**Agent identity.** Decide early what an agent *is* in your permission model. It should be a first-class principal acting on behalf of a user, with its own scoped token and its own line in the audit log — not a human's session borrowed by a script. Retrofitting this after your first enterprise security review is much less pleasant than deciding it now.
 
 ---
 
-## 7. If you are the solo builder: run both paths
+## 9. The commercial consequences
 
-One more thing from the episode is worth extracting, because it is a genuinely good operating principle and it is not about tooling at all.
+If you sell software, the "new kind of user" line has a P&L behind it.
 
-The hardest open problem in Yana's workflow is turning designs into accurate sewing patterns. Her response is not to bet the brand on Codex solving it, and not to conclude that AI cannot do it. She has **human patternmakers and Codex working the same problem in parallel**, and she lets the results decide.
+For twenty years the moat around specialist software was partly capability and substantially **fluency**. CLO, AutoCAD, Ableton, Cadence, ArcGIS, SAP, Avid — each has a real learning cliff, and that cliff produced a professional class whose expertise was partly domain and partly *tool*. The cliff protected the vendor: switching cost was measured in retraining.
 
-This looks wasteful and is not, for a specific reason: the cost of running the second path is now small, and the cost of being wrong about which path works is large. When you cannot tell in advance whether the automated path will clear the bar, and the automated path is cheap to attempt, running both and comparing is simply better information than arguing about it. The comparison also gives you something an opinion never does — a concrete measure of the gap, which tells you whether the automated path is one iteration away or three years away.
+An agent that can drive the tool competently changes who can buy it. Yana never learned CLO and still produced CAD files with it. That is not a story about CLO being disrupted — it is CLO's addressable market expanding to everyone who has the design problem but never had six months to spend on the interface. **The same expansion is available to every vertical SaaS product whose adoption is currently gated on "someone has to learn this."**
 
-The engineering version of this: when adopting an agent workflow for something consequential, keep the existing process running alongside it until the outputs agree. Not as a rollback plan — as the evaluation.
+It is not automatic. It goes to whoever ships the surface. Concretely:
 
----
-
-## 8. Where else this pattern is sitting unbuilt
-
-The shape — intent model → tool contract → specialist engine with an oracle — is not about fashion. It fits anywhere the following three things are true:
-
-1. A specialist application encodes real domain constraints that a language model cannot compute.
-2. That application has, or could have, a programmatic surface.
-3. There is a check that can say "this is wrong" without a human.
-
-That describes a lot of industry:
-
-| Domain | Engine | Oracle |
-| --- | --- | --- |
-| Mechanical design | CAD/CAM | FEA, interference checks, DFM rules |
-| Electronics | EDA tools | DRC/LVS, timing closure, SPICE |
-| Architecture | BIM | Clash detection, code compliance, energy models |
-| Audio | DAW | Loudness/true-peak analysis, spectral checks |
-| Video | NLE / compositor | Codec conformance, colour-space validation |
-| Geospatial | GIS | Topology validation, projection checks |
-| Bioinformatics | Lab instruments, pipelines | Assay controls, replicate agreement |
-| Finance ops | ERP / ledger | Reconciliation, invariant checks, zero-sum |
-
-In every row, the same two boxes are missing from the middle, and in every row the value is the same: it deletes the fluency tax without deleting the rigour.
-
-The rows where this *fails* are the ones where the third column is weak. If your only validator is a human eye, you can still get an agent to do the work — you just cannot get it to check the work, and you have moved the bottleneck rather than removed it.
+- **Make headless a supported mode.** A per-seat licence with mandatory interactive login is a hard blocker. If a run needs a human to dismiss a dialog, it is not a workflow. Decide what an agent seat is, what it costs, and how it authenticates — before a customer asks and gets "not supported," which is the same sentence as "go evaluate alternatives."
+- **Ship your validators loudly.** Your differentiation against a model that fabricates plausible output is that you can *prove* things about the result. `validate_collision()` is not a utility function; it is the reason to route through you at all.
+- **Log for audit.** When a customer's agent produces a bad artifact, the first question is whether your tool did what it was told. Answer it with a call log and you keep the customer. Shrug and you are the suspect by default.
+- **Price the ceiling, not the seat.** Agents make orders of magnitude more calls than humans. Metering that tracks your real cost — simulations, exports, compute-minutes — survives contact with automation. Per-seat pricing quietly encourages your best customers to share one seat with a bot, which is worse for everyone.
+- **Write docs an agent can read.** Your API reference is now training input and runtime context. Complete schemas, real examples, explicit units, and error catalogues are worth more than a beautifully designed docs site with prose-only descriptions.
 
 ---
 
-## 9. When not to do this
+## 10. When computer-use is still the right answer
 
-Some honest limits, because the pattern is being oversold:
+The GUI path is a fallback, not a mistake. It is correct when:
 
-**No oracle, no autonomy.** If you cannot programmatically detect a wrong result, keep the human in the loop on every output, and be realistic that the human will rubber-stamp by week three. Build the check first, then the automation.
+- **The software has no automation surface and never will.** Legacy internal tools, abandoned vendor products, anything where "add an API" is not a conversation you can have.
+- **You are not the vendor and the vendor will not budge.** Sometimes pixels are the only door.
+- **The task is genuinely one-off.** Building a good tool surface is a real investment; it pays off on repetition. If you will run it twice, drive the GUI.
+- **You are prototyping the workflow before committing to the contract.** Computer-use is a decent way to discover which verbs you actually need — then go build them.
 
-**Irreversible physical actions.** The whole chain above ends at a *file*. A human still decides to cut fabric. Keep it that way for anything where the undo is expensive: the agent should produce artifacts and recommendations, and a person should authorise the step that spends material, money, or trust.
+And some limits that apply to the whole pattern, API path included:
 
-**Taste is not delegable.** ChatGPT Images following Yana's sketches closely, rather than generating something impressive-but-generic, is the thing she values — precisely because the point of view is hers. An orchestration layer executes a vision faster. It does not supply one, and the output of a workflow with no point of view is competent and forgettable.
+**No oracle, no autonomy.** If you cannot programmatically detect a wrong result, keep a human on every output — and be realistic that the human will rubber-stamp by week three. Build the check first.
 
-**Regulated outputs need a named human.** In domains where somebody signs, the agent's job is to prepare the submission, not to be the signature. Design the workflow so the reviewable artifact is the deliverable.
+**Irreversible actions stay behind a human.** The CLO chain ends at a *file*. A person still decides to cut fabric. Keep it that way wherever undo is expensive: agents produce artifacts and recommendations; people authorise the step that spends material, money, or trust.
 
-**If the task is genuinely one-off, skip the layer.** Building a good tool surface is a real investment. If you will run the workflow twice, drive the GUI by hand. The layer pays off on repetition and on the ability to trust the result — not on novelty.
+**Taste is not delegable.** What Yana values is that the image model follows *her* sketches closely rather than generating something impressive-but-generic. An orchestration layer executes a point of view faster. It does not supply one, and work with no point of view is competent and forgettable.
 
 ---
 
-## 10. Checklist
+## 11. Checklist
 
-For anyone about to build the middle two boxes:
+**Architecture**
+- [ ] The domain API exists as its own layer, and the web UI calls it like any other client
+- [ ] The three things customers actually do are each *one* call, not six ordered writes
+- [ ] No business rule is implemented in more than one place
+- [ ] CLI, MCP, and webhooks are thin adapters with zero unique logic
 
-**Tool surface**
-- [ ] Every tool is a verb the user could have said out loud
-- [ ] Fewer than ~10 tools; each one distinct enough that choosing is obvious
+**Contract**
+- [ ] Every verb is something a competent user could say out loud
 - [ ] Units are in the schema or the parameter name — never only in prose
-- [ ] Objects have stable IDs; mutations carry an expected `revision`
-- [ ] Every mutation returns what changed and an undo token
+- [ ] Objects have stable IDs; mutations carry an expected revision
+- [ ] Mutations return what changed and an undo token
+- [ ] State exposes staleness so the agent knows what to recompute
 
 **Verification**
 - [ ] There is at least one ground-truth oracle the agent can call
 - [ ] Validators return structured detail (what, where, how much), never a bare boolean
-- [ ] Validation is callable standalone, not only implicit at export
-- [ ] State exposes staleness (`last_simulation: stale`) so the agent knows what to re-run
+- [ ] Validation is callable standalone, not only implicit at commit
 
 **Operations**
-- [ ] Long jobs return handles and are polled, not blocked on
+- [ ] Long jobs return handles, are pollable, and fire webhooks
 - [ ] Boundary-crossing calls are idempotent or transactional
 - [ ] Invalid input is rejected, never coerced
-- [ ] Per-run budget and call caps enforced in code, not in the prompt
-- [ ] The call log — not the chat transcript — is the artifact of record and is replayable
+- [ ] Budgets and call caps are enforced in code, not in the prompt
+- [ ] Agents are first-class principals with scoped tokens and audit-log identity
+- [ ] The call log — not the chat transcript — is the artifact of record, and it replays
 
 **Errors**
-- [ ] Each message states the diagnosis, the constraint, the numbers, and the exits
+- [ ] Each message gives diagnosis, constraint, numbers, and exits
 - [ ] No error requires reading your source to act on
 
 ---
 
 ## Closing
 
-The sentence at the top of this post — "make the skirt 8 cm longer and regenerate the manufacturing pattern" — is the kind of request that used to require a person fluent in a specific expensive application, and therefore used to require either being that person or hiring one.
+The sentence at the top — "make the skirt 8 cm longer and regenerate the manufacturing pattern" — used to require being fluent in an expensive application, or hiring someone who was. It is now five calls.
 
-It does not require the model to know how cloth behaves. It requires the model to know *who does*, and to be able to ask them precisely: five well-named verbs, explicit units, a simulator that will say no, and an error message worth reading.
+But the fashion story is the illustration, not the lesson. The lesson is that the stack grew a layer, and that layer talks to contracts, not buttons. Every product now has two kinds of user: the one who looks at your interface and the one who reads your schema. The second one is growing faster, is more literal, is much less forgiving of ambiguity, and cannot see a single thing you did not expose.
 
-That middle layer is unglamorous, and it is where the leverage is. The models will keep getting better on their own. The contracts will not build themselves.
+SaaS is not disappearing. It is gaining a new kind of user — and the vendors who notice will find that user is a lot less price-sensitive about the parts they cannot fake.
 
 ---
 
