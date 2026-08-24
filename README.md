@@ -9,6 +9,7 @@ This repository contains blog posts explaining various big data concepts and tec
 3. [Profiling Tools: %timeit and %lprun](CodeProfiling.md)
 4. [How to Build a Ledger-as-a-Service Product Package](LedgerAsAService.md)
 5. [Keep The Monolith, Keep It Well](KeepTheMonolith.md)
+6. [Make the Skirt 8 cm Longer: Agents as the Orchestration Layer](AgentsAsOrchestrationLayer.md)
 
 ## Contributing
 
