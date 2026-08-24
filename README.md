@@ -9,7 +9,7 @@ This repository contains blog posts explaining various big data concepts and tec
 3. [Profiling Tools: %timeit and %lprun](CodeProfiling.md)
 4. [How to Build a Ledger-as-a-Service Product Package](LedgerAsAService.md)
 5. [Keep The Monolith, Keep It Well](KeepTheMonolith.md)
-6. [SaaS Is Gaining a New Kind of User](AgentsAsOrchestrationLayer.md)
+6. [SaaS isn't disappearing. It's gaining a new kind of user.](AgentsAsOrchestrationLayer.md)
 
 ## Contributing
 
