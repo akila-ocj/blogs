@@ -7,6 +7,7 @@ This repository contains blog posts explaining various big data concepts and tec
 1. [Understanding MapReduce with a Simple Example](MapReduce.md)
 2. [Mounting a VirtualBox Shared Folder in Ubuntu](VirtualBoxSharedFolder.md)
 3. [Profiling Tools: %timeit and %lprun](CodeProfiling.md)
+4. [How to Build a Ledger-as-a-Service Product Package](LedgerAsAService.md)
 
 ## Contributing
 
